@@ -1,65 +1,74 @@
-from rest_framework import viewsets
 from django.shortcuts import get_object_or_404
-from posts.models import Post, Group, Follow
-from .serializers import PostSerializer, GroupSerializer
-from .serializers import CommentSerializer, FollowSerializer
-from rest_framework.pagination import LimitOffsetPagination
-from .permissions import AuthorOrReadOnly
-from rest_framework import permissions
-from rest_framework import filters
-from rest_framework import mixins
+from rest_framework import filters, mixins, permissions, viewsets
 
-
-class ListCreateViewSet(
-    mixins.ListModelMixin,
-    mixins.CreateModelMixin,
-    viewsets.GenericViewSet
-):
-    pass
+from posts.models import Group, Post
+from .permissions import IsAuthorOrReadOnly
+from .serializers import (
+    CommentSerializer, FollowSerializer, GroupSerializer, PostSerializer
+)
 
 
 class PostViewSet(viewsets.ModelViewSet):
+    """Вьюсет для обьектов модели Post."""
+
     queryset = Post.objects.all()
     serializer_class = PostSerializer
-    pagination_class = LimitOffsetPagination
-    permission_classes = (AuthorOrReadOnly,)
+    permission_classes = (
+        permissions.IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly
+    )
 
     def perform_create(self, serializer):
+        """Создает запись, где автором является текущий пользователь."""
         serializer.save(author=self.request.user)
 
 
 class GroupViewSet(viewsets.ReadOnlyModelViewSet):
+    """Вьюсет для обьектов модели Group."""
+
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
 
 
 class CommentViewSet(viewsets.ModelViewSet):
+    """Вьюсет для обьектов модели Comment."""
+
     serializer_class = CommentSerializer
-    permission_classes = (AuthorOrReadOnly,)
+    permission_classes = (
+        permissions.IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly
+    )
+
+    def get_post(self):
+        """Возвращает объект текущей записи."""
+        post_id = self.kwargs.get('post_id')
+        return get_object_or_404(Post, pk=post_id)
 
     def get_queryset(self):
-        post_id = self.kwargs.get('post_id')
-        post = get_object_or_404(Post, pk=post_id)
-        new_queryset = post.comments.all()
-        return new_queryset
+        """Возвращает queryset c комментариями для текущей записи."""
+        return self.get_post().comments.all()
 
     def perform_create(self, serializer):
-        post_id = self.kwargs.get('post_id')
-        author = self.request.user
-        post = get_object_or_404(Post, pk=post_id)
-        serializer.save(author=author, post=post)
+        """Создает комментарий для текущего поста,
+        где автором является текущий пользователь."""
+        serializer.save(
+            author=self.request.user,
+            post=self.get_post()
+        )
 
 
-class FollowViewSet(ListCreateViewSet):
+class FollowViewSet(mixins.CreateModelMixin,
+                    mixins.ListModelMixin,
+                    viewsets.GenericViewSet):
+    """Вьюсет для обьектов модели Follow."""
+
     serializer_class = FollowSerializer
     permission_classes = (permissions.IsAuthenticated,)
     filter_backends = (filters.SearchFilter,)
     search_fields = ('following__username',)
 
     def get_queryset(self):
-        new_queryset = Follow.objects.filter(user=self.request.user)
-        return new_queryset
+        """Возвращает queryset c подписками для текущего пользователя."""
+        return self.request.user.follower.all()
 
     def perform_create(self, serializer):
-        user = self.request.user
-        serializer.save(user=user)
+        """Создает подписку, где подписчиком является текущий пользователь."""
+        serializer.save(user=self.request.user)
